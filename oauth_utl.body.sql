@@ -9,11 +9,11 @@ as
 	* RESOURCE - Make a resoure request, with verified and authorized Oauth tokens
 	*/
 	generate_switch					varchar2(50)			:= 'REQUEST_TOKEN';
+	oauth_parameters				oauth_utl.param_arr;
 
-	oauth_nonce						varchar2(500) 			:= null;
+	-- Oauth basic settings
 	oauth_timestamp					varchar2(500) 			:= null;
-	oauth_http_method				varchar2(10) 			:= 'POST';
-	oauth_callback					varchar2(10)			:= 'oob';
+	oauth_callback					varchar2(10)			:= null;
 	oauth_base_string				varchar2(32000)			:= null;
 	oauth_key						varchar2(500)			:= null;
 	oauth_signature_sha1			raw(2000)				:= null;
@@ -47,6 +47,26 @@ as
 	oauth_header_name				varchar2(4000);
 	oauth_header_val				varchar2(4000);
 	oauth_body_line					varchar2(4000);
+
+	procedure oauth_defaults
+	
+	as
+	
+	begin
+	
+		dbms_application_info.set_action('oauth_defaults');
+
+		oauth_parameters('oauth_http_method') := 'POST';
+		oauth_parameters('oauth_callback') := 'oob';
+	
+		dbms_application_info.set_action(null);
+	
+		exception
+			when others then
+				dbms_application_info.set_action(null);
+				raise;
+	
+	end oauth_defaults;
 
 	function real_url_encode (
 		str_in						in				varchar2
@@ -83,14 +103,44 @@ as
 	
 	end real_url_encode;
 
+	procedure assert_supported
+	
+	as
+
+		oauth_exc						exception;
+		pragma							exception_init(oauth_exc, -20001);
+	
+	begin
+	
+		dbms_application_info.set_action('assert_supported');
+
+		if oauth_parameters('oauth_version') is not null and oauth_parameters('oauth_version') != real_url_encode('1.0') then
+			raise_application_error(-20001, 'Only Oauth version 1.0 is currently supported.');
+		end if;
+
+		if oauth_parameters('oauth_signature_method') is not null and oauth_parameters('oauth_signature_method') != real_url_encode('HMAC-SHA1') then
+			raise_application_error(-20001, 'Only HMAC-SHA1 signatures is currently supported.');
+		end if;
+	
+		dbms_application_info.set_action(null);
+	
+		exception
+			when others then
+				dbms_application_info.set_action(null);
+				raise;
+	
+	end assert_supported;
+
 	procedure generate_nonce
 
 	as
 
 	begin
 
-		oauth_nonce := dbms_random.string('A', 15);
-		oauth_nonce := real_url_encode(utl_encode.base64_encode(utl_i18n.string_to_raw (oauth_nonce, 'AL32UTF8')));
+		assert_supported;
+
+		oauth_parameters('oauth_nonce') := dbms_random.string('A', 15);
+		oauth_parameters('oauth_nonce') := real_url_encode(utl_encode.base64_encode(utl_i18n.string_to_raw (oauth_parameters('oauth_nonce'), 'AL32UTF8')));
 
 	end generate_nonce;
 
@@ -101,6 +151,8 @@ as
 	begin
 
 		dbms_application_info.set_action('generate_timestamp');
+
+		assert_supported;
 
 		oauth_timestamp := real_url_encode(round(((sysdate - to_date('01-01-1970', 'DD-MM-YYYY'))  * (86400)) - 7200));
 
@@ -121,8 +173,10 @@ as
 	
 		dbms_application_info.set_action('generate_base');
 
+		assert_supported;
+
 		if generate_switch = 'REQUEST_TOKEN' then
-			oauth_base_string := 	oauth_http_method
+			oauth_base_string := 	oauth_parameters('oauth_http_method')
 									|| '&'
 									|| real_url_encode(oauth_request_token_url)
 									|| '&'
@@ -132,16 +186,16 @@ as
 										|| '&oauth_consumer_key='
 										|| oauth_consumer_key
 										|| '&oauth_nonce='
-										|| oauth_nonce
+										|| oauth_parameters('oauth_nonce')
 										|| '&oauth_signature_method='
-										|| oauth_utl.oauth_signature_method
+										|| oauth_parameters('oauth_signature_method')
 										|| '&oauth_timestamp='
 										|| oauth_timestamp
 										|| '&oauth_version='
-										|| oauth_utl.oauth_version
+										|| oauth_parameters('oauth_version')
 									);
 		elsif generate_switch = 'ACCESS_TOKEN' then
-			oauth_base_string := 	oauth_http_method
+			oauth_base_string := 	oauth_parameters('oauth_http_method')
 									|| '&'
 									|| real_url_encode(oauth_access_token_url)
 									|| '&'
@@ -149,9 +203,9 @@ as
 										'oauth_consumer_key='
 										|| oauth_consumer_key
 										|| '&oauth_nonce='
-										|| oauth_nonce
+										|| oauth_parameters('oauth_nonce')
 										|| '&oauth_signature_method='
-										|| oauth_utl.oauth_signature_method
+										|| oauth_parameters('oauth_signature_method')
 										|| '&oauth_timestamp='
 										|| oauth_timestamp
 										|| '&oauth_token='
@@ -159,10 +213,10 @@ as
 										|| '&oauth_verifier='
 										|| oauth_authorize_verifier
 										|| '&oauth_version='
-										|| oauth_utl.oauth_version
+										|| oauth_parameters('oauth_version')
 									);
 		elsif generate_switch = 'RESOURCE' then
-			oauth_base_string := 	oauth_http_method
+			oauth_base_string := 	oauth_parameters('oauth_http_method')
 									|| '&'
 									|| real_url_encode(oauth_access_token_url)
 									|| '&'
@@ -170,9 +224,9 @@ as
 										'oauth_consumer_key='
 										|| oauth_consumer_key
 										|| '&oauth_nonce='
-										|| oauth_nonce
+										|| oauth_parameters('oauth_nonce')
 										|| '&oauth_signature_method='
-										|| oauth_utl.oauth_signature_method
+										|| oauth_parameters('oauth_signature_method')
 										|| '&oauth_timestamp='
 										|| oauth_timestamp
 										|| '&oauth_token='
@@ -180,7 +234,7 @@ as
 										|| '&oauth_verifier='
 										|| oauth_authorize_verifier
 										|| '&oauth_version='
-										|| oauth_utl.oauth_version
+										|| oauth_parameters('oauth_version')
 									);
 			-- Here we add other inputs if any
 		end if;
@@ -203,6 +257,8 @@ as
 	begin
 	
 		dbms_application_info.set_action('generate_signature');
+
+		assert_supported;
 
 		oauth_signature_sha1 := dbms_crypto.mac (
 									src 	=> utl_i18n.string_to_raw (oauth_base_string, 'AL32UTF8'),
@@ -231,21 +287,23 @@ as
 	
 		dbms_application_info.set_action('generate_request_token_url');
 
+		assert_supported;
+
 		oauth_request_url := 	oauth_request_token_url
 								|| '?oauth_callback='
 								|| oauth_callback
 								|| '&oauth_consumer_key='
 								|| oauth_consumer_key
 								|| '&oauth_nonce='
-								|| oauth_nonce
+								|| oauth_parameters('oauth_nonce')
 								|| '&oauth_signature='
 								|| real_url_encode(oauth_signature_sha1_base64)
 								|| '&oauth_signature_method='
-								|| oauth_utl.oauth_signature_method
+								|| oauth_parameters('oauth_signature_method')
 								|| '&oauth_timestamp='
 								|| oauth_timestamp
 								|| '&oauth_version='
-								|| oauth_version;
+								|| oauth_parameters('oauth_version');
 
 		dbms_output.put_line('Full request token url: ' || oauth_request_url);
 	
@@ -266,13 +324,15 @@ as
 	
 		dbms_application_info.set_action('generate_oauth_header');
 
-		oauth_header := 	'Authorization: OAuth oauth_nonce="' || oauth_nonce || '", '
+		assert_supported;
+
+		oauth_header := 	'Authorization: OAuth oauth_nonce="' || oauth_parameters('oauth_nonce') || '", '
 							|| 'oauth_callback="' || oauth_callback ||'", '
-							|| 'oauth_signature_method="'|| oauth_utl.oauth_signature_method || '", '
+							|| 'oauth_signature_method="'|| oauth_parameters('oauth_signature_method') || '", '
 							|| 'oauth_timestamp="'|| oauth_timestamp || '", '
 							|| 'oauth_consumer_key="'|| oauth_consumer_key || '", '
 							|| 'oauth_signature="' || real_url_encode(oauth_signature_sha1_base64) || '", '
-							|| 'oauth_version="' || oauth_utl.oauth_version || '"';
+							|| 'oauth_version="' || oauth_parameters('oauth_version') || '"';
 
 		dbms_output.put_line('Oauth header: ' || oauth_header);
 	
@@ -293,9 +353,11 @@ as
 	
 		dbms_application_info.set_action('generate_key');
 
+		assert_supported;
+
 		if generate_switch = 'REQUEST_TOKEN' then
 			oauth_key := oauth_consumer_secret || '&';
-		elsif generate_switch = 'ACCESS_TOKEN'
+		elsif generate_switch = 'ACCESS_TOKEN' then
 			oauth_key := oauth_consumer_secret || '&' || oauth_request_secret;
 		elsif generate_switch = 'RESOURCE' then
 			oauth_key := oauth_consumer_secret || '&' || oauth_access_secret;
@@ -318,6 +380,8 @@ as
 	
 		dbms_application_info.set_action('send_request');
 
+		assert_supported;
+
 		-- Extended error checking
 		utl_http.set_response_error_check(
 			enable => true
@@ -328,7 +392,7 @@ as
 
 		oauth_request := utl_http.begin_request (
 			url		=>	oauth_request_url,
-			method	=>	oauth_http_method
+			method	=>	oauth_parameters('oauth_http_method')
 		);
 
 		utl_http.set_header (
@@ -390,7 +454,32 @@ as
 	
 	end send_request;
 
-	procedure oauth1_request_token (
+	procedure oauth_setup (
+		oauth_version						in				varchar2 default '1.0'
+		, oauth_signature_type				in				varchar2 default 'HMAC-SHA1'
+		, oauth_callback					in				varchar2 default 'oob'
+	)
+	
+	as
+	
+	begin
+	
+		dbms_application_info.set_action('oauth_setup');
+
+		oauth_parameters('oauth_signature_method') := real_url_encode(oauth_signature_type);
+		oauth_parameters('oauth_version') := real_url_encode(oauth_version);
+		oauth_parameters('oauth_callback') := oauth_callback;
+	
+		dbms_application_info.set_action(null);
+	
+		exception
+			when others then
+				dbms_application_info.set_action(null);
+				raise;
+	
+	end oauth_setup;
+
+	procedure oauth_client_setup (
 		client_key						in				varchar2
 		, client_secret					in				varchar2
 	)
@@ -399,11 +488,43 @@ as
 	
 	begin
 	
-		dbms_application_info.set_action('oauth1_request_token');
+		dbms_application_info.set_action('oauth_client_setup');
 
 		-- Setting parms
 		oauth_consumer_key := client_key;
 		oauth_consumer_secret := client_secret;
+	
+		dbms_application_info.set_action(null);
+	
+		exception
+			when others then
+				dbms_application_info.set_action(null);
+				raise;
+	
+	end oauth_client_setup;
+
+	procedure oauth_request_token
+	
+	as
+
+		oauth_exc						exception;
+		pragma							exception_init(oauth_exc, -20001);
+
+	
+	begin
+	
+		dbms_application_info.set_action('oauth_request_token');
+
+		if oauth_parameters('oauth_signature_method') is null and oauth_parameters('oauth_version') is null and oauth_callback is null then
+			-- Oauth setup has not been called, run with default
+			oauth_setup;
+		end if;
+
+		generate_switch := 'REQUEST_TOKEN';
+
+		if oauth_consumer_key is null or oauth_consumer_secret is null then
+			raise_application_error(-20001, 'Client key or secret not defined. Please use oauth_client_setup.');
+		end if;
 
 		generate_nonce;
 		generate_timestamp;
@@ -421,11 +542,12 @@ as
 				dbms_application_info.set_action(null);
 				raise;
 	
-	end oauth1_request_token;
+	end oauth_request_token;
 
 
 begin
 
+	oauth_defaults;
 	dbms_application_info.set_client_info('oauth_utl');
 	dbms_session.set_identifier('oauth_utl');
 
