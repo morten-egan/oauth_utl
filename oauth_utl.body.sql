@@ -3,6 +3,13 @@ create or replace package body oauth_utl
 
 as
 
+	/** Valid switch values:
+	* REQUEST_TOKEN - The very first call to get the temporary credentials
+	* ACCESS_TOKEN - Get the access tokens for the resource, with verified and authorized request token
+	* RESOURCE - Make a resoure request, with verified and authorized Oauth tokens
+	*/
+	generate_switch					varchar2(50)			:= 'REQUEST_TOKEN';
+
 	oauth_nonce						varchar2(500) 			:= null;
 	oauth_timestamp					varchar2(500) 			:= null;
 	oauth_http_method				varchar2(10) 			:= 'POST';
@@ -17,9 +24,18 @@ as
 	oauth_consumer_key				varchar2(4000)			:= null;
 	oauth_consumer_secret			varchar2(4000)			:= null;
 
+	-- Keys and secrets
+	oauth_request_key				varchar2(4000)			:= null;
+	oauth_request_secret			varchar2(4000)			:= null;
+	oauth_authorize_verifier		varchar2(4000)			:= null;				
+	oauth_access_key				varchar2(4000)			:= null;
+	oauth_access_secret				varchar2(4000)			:= null;
+
 	-- Endpoints
 	oauth_request_token_url			varchar2(4000)			:= 'http://www.ide.ufv.br:8008/i3geo/pacotes/linkedinoauth/example/request_token.php';
 	oauth_access_token_url			varchar2(4000)			:= null;
+	oauth_authorize_url				varchar2(4000)			:= null;
+	oauth_callback_url				varchar2(4000)			:= null;
 	oauth_resource_url				varchar2(4000)			:= null;
 
 	-- Request URLs
@@ -105,21 +121,69 @@ as
 	
 		dbms_application_info.set_action('generate_base');
 
-		oauth_base_string := 	oauth_http_method
-								|| '&'
-								|| real_url_encode(oauth_request_token_url)
-								|| real_url_encode(
-									'&oauth_consumer_key='
-									|| oauth_consumer_key
-									|| '&oauth_nonce='
-									|| oauth_nonce
-									|| '&oauth_signature_method='
-									|| oauth_utl.oauth_signature_method
-									|| '&oauth_timestamp='
-									|| oauth_timestamp
-									|| '&oauth_version='
-									|| oauth_utl.oauth_version
-								);
+		if generate_switch = 'REQUEST_TOKEN' then
+			oauth_base_string := 	oauth_http_method
+									|| '&'
+									|| real_url_encode(oauth_request_token_url)
+									|| '&'
+									|| real_url_encode(
+										'oauth_callback='
+										|| oauth_callback
+										|| '&oauth_consumer_key='
+										|| oauth_consumer_key
+										|| '&oauth_nonce='
+										|| oauth_nonce
+										|| '&oauth_signature_method='
+										|| oauth_utl.oauth_signature_method
+										|| '&oauth_timestamp='
+										|| oauth_timestamp
+										|| '&oauth_version='
+										|| oauth_utl.oauth_version
+									);
+		elsif generate_switch = 'ACCESS_TOKEN' then
+			oauth_base_string := 	oauth_http_method
+									|| '&'
+									|| real_url_encode(oauth_access_token_url)
+									|| '&'
+									|| real_url_encode(
+										'oauth_consumer_key='
+										|| oauth_consumer_key
+										|| '&oauth_nonce='
+										|| oauth_nonce
+										|| '&oauth_signature_method='
+										|| oauth_utl.oauth_signature_method
+										|| '&oauth_timestamp='
+										|| oauth_timestamp
+										|| '&oauth_token='
+										|| oauth_request_key
+										|| '&oauth_verifier='
+										|| oauth_authorize_verifier
+										|| '&oauth_version='
+										|| oauth_utl.oauth_version
+									);
+		elsif generate_switch = 'RESOURCE' then
+			oauth_base_string := 	oauth_http_method
+									|| '&'
+									|| real_url_encode(oauth_access_token_url)
+									|| '&'
+									|| real_url_encode(
+										'oauth_consumer_key='
+										|| oauth_consumer_key
+										|| '&oauth_nonce='
+										|| oauth_nonce
+										|| '&oauth_signature_method='
+										|| oauth_utl.oauth_signature_method
+										|| '&oauth_timestamp='
+										|| oauth_timestamp
+										|| '&oauth_token='
+										|| oauth_access_key
+										|| '&oauth_verifier='
+										|| oauth_authorize_verifier
+										|| '&oauth_version='
+										|| oauth_utl.oauth_version
+									);
+			-- Here we add other inputs if any
+		end if;
 		
 		dbms_output.put_line(oauth_base_string);
 	
@@ -168,7 +232,9 @@ as
 		dbms_application_info.set_action('generate_request_token_url');
 
 		oauth_request_url := 	oauth_request_token_url
-								|| '?oauth_consumer_key='
+								|| '?oauth_callback='
+								|| oauth_callback
+								|| '&oauth_consumer_key='
 								|| oauth_consumer_key
 								|| '&oauth_nonce='
 								|| oauth_nonce
@@ -201,6 +267,7 @@ as
 		dbms_application_info.set_action('generate_oauth_header');
 
 		oauth_header := 	'Authorization: OAuth oauth_nonce="' || oauth_nonce || '", '
+							|| 'oauth_callback="' || oauth_callback ||'", '
 							|| 'oauth_signature_method="'|| oauth_utl.oauth_signature_method || '", '
 							|| 'oauth_timestamp="'|| oauth_timestamp || '", '
 							|| 'oauth_consumer_key="'|| oauth_consumer_key || '", '
@@ -217,6 +284,31 @@ as
 				raise;
 	
 	end generate_oauth_header;
+
+	procedure generate_key
+	
+	as
+	
+	begin
+	
+		dbms_application_info.set_action('generate_key');
+
+		if generate_switch = 'REQUEST_TOKEN' then
+			oauth_key := oauth_consumer_secret || '&';
+		elsif generate_switch = 'ACCESS_TOKEN'
+			oauth_key := oauth_consumer_secret || '&' || oauth_request_secret;
+		elsif generate_switch = 'RESOURCE' then
+			oauth_key := oauth_consumer_secret || '&' || oauth_access_secret;
+		end if;
+	
+		dbms_application_info.set_action(null);
+	
+		exception
+			when others then
+				dbms_application_info.set_action(null);
+				raise;
+	
+	end generate_key;
 
 	procedure send_request
 	
@@ -298,7 +390,7 @@ as
 	
 	end send_request;
 
-	procedure oauth1 (
+	procedure oauth1_request_token (
 		client_key						in				varchar2
 		, client_secret					in				varchar2
 	)
@@ -307,16 +399,16 @@ as
 	
 	begin
 	
-		dbms_application_info.set_action('oauth1');
+		dbms_application_info.set_action('oauth1_request_token');
 
 		-- Setting parms
 		oauth_consumer_key := client_key;
 		oauth_consumer_secret := client_secret;
-		oauth_key := oauth_consumer_secret || '&';
 
 		generate_nonce;
 		generate_timestamp;
 		generate_base;
+		generate_key;
 		generate_signature;
 		generate_request_token_url;
 		generate_oauth_header;
@@ -329,7 +421,7 @@ as
 				dbms_application_info.set_action(null);
 				raise;
 	
-	end oauth1;
+	end oauth1_request_token;
 
 
 begin
