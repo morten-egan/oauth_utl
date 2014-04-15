@@ -604,6 +604,47 @@ as
 	
 	end oauth_access_token;
 
+	procedure oauth_resource
+	
+	as
+	
+	begin
+	
+		dbms_application_info.set_action('oauth_resource');
+
+		if oauth_parameters('oauth_signature_method') is null and oauth_parameters('oauth_version') is null then
+			-- Oauth setup has not been called, run with default
+			oauth_setup;
+		end if;
+
+		if oauth_parameters('oauth_consumer_key') is null or oauth_parameters('oauth_consumer_secret') is null then
+			raise_application_error(-20001, 'Client key or secret not defined. Please use oauth_client_setup.');
+		end if;
+
+		if oauth_parameters('oauth_access_key') is null or oauth_parameters('oauth_access_secret') is null then
+			raise_application_error(-20001, 'Access key or secret not defined. Please use oauth_access_setup.');
+		end if;
+
+		generate_switch := 'RESOURCE';
+
+		generate_nonce;
+		generate_timestamp;
+		generate_base;
+		generate_key;
+		generate_signature;
+		generate_request_token_url;
+		generate_oauth_header;
+		send_request;
+	
+		dbms_application_info.set_action(null);
+	
+		exception
+			when others then
+				dbms_application_info.set_action(null);
+				raise;
+	
+	end oauth_resource;
+
 begin
 
 	oauth_defaults;
