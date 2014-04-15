@@ -35,5 +35,11 @@ as
 	*/
 	procedure oauth_request_token;
 
+	/** Oauth get access tokens
+	* @author Morten Egan
+	* @param parm_name A description of the parameter
+	*/
+	procedure oauth_access_token;
+
 end oauth_utl;
 /
